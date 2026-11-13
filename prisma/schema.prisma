@@ -1,0 +1,208 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  SUPER_ADMIN
+  OWNER
+  STAFF
+  RENTER
+}
+enum FlatStatus {
+  VACANT
+  OCCUPIED
+  MAINTENANCE
+}
+enum HeadType {
+  FIXED
+  METERED
+}
+enum InvoiceStatus {
+  UNPAID
+  PARTIAL
+  PAID
+}
+enum PaymentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model User {
+  id          String   @id @default(cuid())
+  name        String
+  email       String?  @unique
+  phone       String?  @unique
+  password    String
+  role        Role
+  ownerId     String?
+  permissions Json?
+  plan        String   @default("FREE")
+  active      Boolean  @default(true)
+  flatLimit   Int?
+  failedLogins Int     @default(0)
+  lockedUntil DateTime?
+  createdAt   DateTime @default(now())
+  renter      Renter?
+}
+
+model Building {
+  id      String @id @default(cuid())
+  ownerId String
+  name    String
+  address String
+  flats   Flat[]
+  @@index([ownerId])
+}
+
+model Flat {
+  id         String     @id @default(cuid())
+  ownerId    String
+  buildingId String
+  building   Building   @relation(fields: [buildingId], references: [id])
+  label      String
+  baseRent   Float
+  status     FlatStatus @default(VACANT)
+  renter     Renter?
+  invoices   Invoice[]
+  @@index([ownerId])
+}
+
+model Renter {
+  id               String   @id @default(cuid())
+  ownerId          String
+  userId           String   @unique
+  user             User     @relation(fields: [userId], references: [id])
+  flatId           String   @unique
+  flat             Flat     @relation(fields: [flatId], references: [id])
+  phone            String
+  whatsappNumber   String
+  nidNumber        String?
+  nidFrontUrl      String?
+  nidBackUrl       String?
+  emergencyContact String?
+  moveInDate       DateTime
+  advanceDeposit   Float    @default(0)
+  @@index([ownerId])
+}
+
+model BillingHead {
+  id           String   @id @default(cuid())
+  ownerId      String
+  buildingId   String?
+  flatId       String?
+  name         String
+  type         HeadType
+  fixedAmount  Float    @default(0)
+  unitRate     Float    @default(0)
+  demandCharge Float    @default(0)
+  @@index([ownerId])
+}
+
+model Invoice {
+  id          String        @id @default(cuid())
+  ownerId     String
+  flatId      String
+  flat        Flat          @relation(fields: [flatId], references: [id])
+  month       String
+  previousDue Float         @default(0)
+  totalAmount Float
+  paidAmount  Float         @default(0)
+  dueAmount   Float
+  status      InvoiceStatus @default(UNPAID)
+  items       InvoiceItem[]
+  payments    Payment[]
+  createdAt   DateTime      @default(now())
+  @@unique([flatId, month])
+  @@index([ownerId])
+}
+
+model InvoiceItem {
+  id           String  @id @default(cuid())
+  invoiceId    String
+  invoice      Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  headName     String
+  amount       Float
+  previousUnit Float?
+  currentUnit  Float?
+  unitRate     Float?
+  demandCharge Float?
+}
+
+model PaymentAccount {
+  id        String  @id @default(cuid())
+  ownerId   String
+  method    String
+  number    String?
+  bankName  String?
+  branch    String?
+  routingNo String?
+  @@index([ownerId])
+}
+
+model Payment {
+  id            String        @id @default(cuid())
+  ownerId       String
+  invoiceId     String
+  invoice       Invoice       @relation(fields: [invoiceId], references: [id])
+  paidAmount    Float
+  transactionId String        @unique
+  senderNumber  String
+  screenshotUrl String?
+  status        PaymentStatus @default(PENDING)
+  rejectReason  String?
+  approvedAt    DateTime?
+  renterName    String?
+  snapshot      Json?
+  createdAt     DateTime      @default(now())
+  @@index([ownerId])
+}
+
+model Expense {
+  id         String   @id @default(cuid())
+  ownerId    String
+  buildingId String?
+  category   String
+  amount     Float
+  note       String?
+  date       DateTime
+  @@index([ownerId])
+}
+
+model FormerRenter {
+  id               String   @id @default(cuid())
+  ownerId          String
+  name             String
+  phone            String
+  whatsappNumber   String
+  nidNumber        String?
+  nidFrontUrl      String?
+  nidBackUrl       String?
+  emergencyContact String?
+  flatLabel        String
+  buildingName     String
+  moveInDate       DateTime
+  moveOutDate      DateTime @default(now())
+  advanceDeposit   Float
+  finalDue         Float
+  refundPaid       Float    @default(0)
+  settlementNote   String?
+  @@index([ownerId])
+}
+
+model SubscriptionPayment {
+  id            String        @id @default(cuid())
+  ownerId       String
+  amount        Float
+  transactionId String        @unique
+  senderNumber  String
+  status        PaymentStatus @default(PENDING)
+  rejectReason  String?
+  createdAt     DateTime      @default(now())
+  @@index([ownerId])
+}
