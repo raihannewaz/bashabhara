@@ -1,5 +1,5 @@
 "use client";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -8,9 +8,10 @@ export default function Modal({ trigger, title, children, variant = "outline", s
   trigger: React.ReactNode; title: string; children: React.ReactNode; variant?: "default" | "outline" | "ghost" | "destructive"; small?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const [opened, setOpened] = useState(false); // the form is only mounted after the first open, which keeps long lists light
   return (
     <>
-      <Button type="button" variant={variant} className={small ? "px-3 py-1.5" : ""} onClick={() => ref.current?.showModal()}>{trigger}</Button>
+      <Button type="button" variant={variant} className={small ? "px-3 py-1.5" : ""} onClick={() => { setOpened(true); ref.current?.showModal(); }}>{trigger}</Button>
       <dialog
         ref={ref}
         onClick={(e) => { if (e.target === ref.current) ref.current?.close(); }}
@@ -22,7 +23,7 @@ export default function Modal({ trigger, title, children, variant = "outline", s
             <h2 className="!mb-0">{title}</h2>
             <button type="button" aria-label="Close" onClick={() => ref.current?.close()} className="!bg-transparent !p-1 !text-foreground"><X className="h-5 w-5" /></button>
           </div>
-          {children}
+          {opened && children}
         </div>
       </dialog>
     </>

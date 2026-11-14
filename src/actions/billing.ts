@@ -13,37 +13,49 @@ const prevMonth = (m: string) => { const [y, mo] = m.split("-").map(Number); con
 
 type Item = { headName: string; amount: number; previousUnit?: number; currentUnit?: number; unitRate?: number; demandCharge?: number };
 
-/** One-click bulk generator. readings maps flatId to the current meter unit for METERED heads. */
+/** One-click bulk generator. readings maps flatId to the current meter unit for METERED heads. Reads once, writes in one transaction. */
 export async function generateBulkInvoices(month: string, readings: Record<string, number> = {}) {
   z.string().regex(/^\d{4}-\d{2}$/).parse(month);
   const { ownerId, flat: scope } = await requireScope(["GENERATE_BILLS", "ENTER_METER_READING"]);
   const owner = await db.user.findUniqueOrThrow({ where: { id: ownerId }, select: { dueDay: true } });
   const flats = await db.flat.findMany({ where: { ownerId, status: "OCCUPIED", ...scope }, include: { renter: true } });
-  let created = 0;
+  if (flats.length === 0) return { created: 0 };
+  const flatIds = flats.map((f) => f.id);
+  const [existing, heads, prevInvoices] = await Promise.all([
+    db.invoice.findMany({ where: { flatId: { in: flatIds }, month }, select: { flatId: true } }),
+    db.billingHead.findMany({ where: { ownerId } }),
+    db.invoice.findMany({ where: { flatId: { in: flatIds }, month: prevMonth(month) }, include: { items: true } }),
+  ]);
+  const done = new Set(existing.map((e) => e.flatId));
+  const prevBy = new Map(prevInvoices.map((i) => [i.flatId, i]));
+
+  const invoiceRows: Prisma.InvoiceCreateManyInput[] = [];
+  const itemRows: Prisma.InvoiceItemCreateManyInput[] = [];
+  const creditUpdates: Prisma.PrismaPromise<unknown>[] = [];
   for (const flat of flats) {
-    if (await db.invoice.findUnique({ where: { flatId_month: { flatId: flat.id, month } } })) continue;
-    const heads = await db.billingHead.findMany({ where: { ownerId, OR: [{ flatId: flat.id }, { buildingId: flat.buildingId, flatId: null }] } });
-    const prev = await db.invoice.findUnique({ where: { flatId_month: { flatId: flat.id, month: prevMonth(month) } }, include: { items: true } });
+    if (done.has(flat.id)) continue;
+    const prev = prevBy.get(flat.id);
     const previousDue = carryOver(prev ? { month: prev.month, dueAmount: prev.dueAmount } : null, flat.renter ? flat.renter.moveInDate.toISOString().slice(0, 7) : null);
     const items: Item[] = [{ headName: "Base Rent", amount: flat.baseRent }];
-    for (const h of heads) {
+    for (const h of heads.filter((x) => x.flatId === flat.id || (x.buildingId === flat.buildingId && !x.flatId))) {
       if (h.type === "FIXED") { items.push({ headName: h.name, amount: h.fixedAmount }); continue; }
       const previousUnit = prev?.items.find((i) => i.headName === h.name)?.currentUnit ?? 0;
       const currentUnit = readings[flat.id] ?? previousUnit;
       items.push({ headName: h.name, previousUnit, currentUnit, unitRate: h.unitRate, demandCharge: h.demandCharge, amount: meteredAmount(previousUnit, currentUnit, h.unitRate, h.demandCharge) });
     }
-    const subtotal = invoiceTotal(items.map((i) => i.amount), previousDue);
-    const credit = creditToApply(subtotal, flat.creditBalance);
-    if (credit > 0) items.push({ headName: "Advance credit applied", amount: -credit });
+    const credit = creditToApply(invoiceTotal(items.map((i) => i.amount), previousDue), flat.creditBalance);
+    if (credit > 0) {
+      items.push({ headName: "Advance credit applied", amount: -credit });
+      creditUpdates.push(db.flat.update({ where: { id: flat.id }, data: { creditBalance: { decrement: credit } } }));
+    }
     const totalAmount = invoiceTotal(items.map((i) => i.amount), previousDue);
-    await db.$transaction([
-      db.invoice.create({ data: { ownerId, flatId: flat.id, month, dueDate: dueDateFor(month, owner.dueDay), previousDue, totalAmount, dueAmount: totalAmount, status: statusFor(totalAmount, 0), items: { create: items } } }),
-      ...(credit > 0 ? [db.flat.update({ where: { id: flat.id }, data: { creditBalance: { decrement: credit } } })] : []),
-    ]);
-    created++;
+    const id = crypto.randomUUID();
+    invoiceRows.push({ id, ownerId, flatId: flat.id, month, dueDate: dueDateFor(month, owner.dueDay), previousDue, totalAmount, dueAmount: totalAmount, status: statusFor(totalAmount, 0) });
+    for (const i of items) itemRows.push({ invoiceId: id, ...i });
   }
-  await audit(ownerId, "Generated invoices", `${month}: ${created} created`);
-  return { created };
+  if (invoiceRows.length > 0) await db.$transaction([db.invoice.createMany({ data: invoiceRows }), db.invoiceItem.createMany({ data: itemRows }), ...creditUpdates]);
+  await audit(ownerId, "Generated invoices", `${month}: ${invoiceRows.length} created`);
+  return { created: invoiceRows.length };
 }
 
 /** Renter submits a manual TrxID payment. Paying more than the due is allowed; the excess becomes advance credit once approved. */

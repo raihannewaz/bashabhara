@@ -49,3 +49,11 @@ Not built yet: nothing from the original brief.
 
 ## Tests and backups
 `npm test` runs unit tests for the money rules (status, partial payments, credit, meter charges, due dates, phone numbers). `scripts/backup.sh` dumps the database and the uploads folder; run it daily from cron and copy the result off the server.
+
+## Speed
+- `npm run dev` compiles each page the first time you open it, so it is always slower than production. To judge real speed locally run `npm run build` then `npm start`.
+- The biggest factor is how far the database is from the app. Every page makes several database queries, and each one pays the full network delay. A remote database from Bangladesh adds 100 to 300 ms per query.
+  - For local work, use PostgreSQL installed on your PC.
+  - On Vercel, create the database in the Singapore region (Neon: AWS ap-southeast-1) so it sits next to the app. `vercel.json` already runs the app in Singapore (`sin1`).
+  - On Vercel, use the database's pooled connection string (Neon: the one with `-pooler` in the host) and add `?pgbouncer=true&connection_limit=1`. Run `npx prisma db push` from your PC with the direct, non-pooled string.
+- Access checks run once per request, long lists show 30 cards at a time, edit forms load when opened, and bulk billing now reads once and writes in one transaction.

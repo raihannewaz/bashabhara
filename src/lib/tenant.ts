@@ -1,5 +1,6 @@
+import { cache } from "react";
 import type { Prisma } from "@prisma/client";
-import { auth } from "@/auth";
+import { getSession } from "@/lib/session";
 import { db } from "@/lib/db";
 
 export const ALL_PERMISSIONS = ["VIEW_FLATS", "MANAGE_PROPERTY", "ENTER_METER_READING", "GENERATE_BILLS", "APPROVE_PAYMENTS", "MANAGE_EXPENSES", "VIEW_REPORTS"] as const;
@@ -28,8 +29,8 @@ const idList = (v: unknown): string[] | null => (Array.isArray(v) && v.length > 
  * Fresh access check on every request. A landlord's permissions are what the administrator allows;
  * staff get what the landlord ticked, limited to that. Staff limited to buildings lose the owner-wide permissions.
  */
-export async function getAccess() {
-  const u = (await auth())?.user;
+export const getAccess = cache(async () => {
+  const u = (await getSession())?.user;
   if (!u?.ownerId) return null;
   const owner = await db.user.findUnique({ where: { id: u.ownerId }, select: { active: true, permissions: true } });
   if (!owner?.active) return null;
@@ -42,7 +43,7 @@ export async function getAccess() {
   let perms = Array.isArray(row.permissions) ? listOrAll(row.permissions).filter((p) => allowed.includes(p)) : [];
   if (buildingIds) perms = perms.filter((p) => !OWNER_WIDE.includes(p));
   return { ownerId: u.ownerId, userId: u.id, isOwner: false, perms, buildingIds };
-}
+});
 
 type Access = NonNullable<Awaited<ReturnType<typeof getAccess>>>;
 /** Prisma filter that limits flats to the buildings a restricted staff member may see. */
@@ -63,8 +64,8 @@ export async function requireTenant(perm?: Permission | Permission[]) {
 }
 
 /** The signed-in renter, or null when logged out or when the renter or their landlord is suspended. */
-export async function getRenter() {
-  const u = (await auth())?.user;
+export const getRenter = cache(async () => {
+  const u = (await getSession())?.user;
   if (u?.role !== "RENTER" || !u.ownerId) return null;
   const [r, me, owner] = await Promise.all([
     db.renter.findUnique({ where: { userId: u.id }, include: { user: true, flat: { include: { building: true } } } }),
@@ -72,4 +73,4 @@ export async function getRenter() {
     db.user.findUnique({ where: { id: u.ownerId }, select: { active: true } }),
   ]);
   return r && me?.active && owner?.active ? r : null;
-}
+});

@@ -34,7 +34,7 @@ export default async function Setup({ searchParams }: { searchParams: Promise<{ 
     db.renter.findMany({ where: { ownerId, flat: scope }, include: { user: true, flat: { include: { building: true } } } }),
     db.billingHead.findMany({ where: { ownerId, ...bScope } }),
     db.paymentAccount.findMany({ where: { ownerId } }),
-    db.invoice.findMany({ where: { ownerId, flat: scope }, orderBy: { month: "desc" } }),
+    db.invoice.findMany({ where: { ownerId, flat: scope, month: { gte: new Date(Date.now() - 130 * 86_400_000).toISOString().slice(0, 7) } }, orderBy: { month: "desc" }, select: { flatId: true, dueAmount: true } }),
     db.formerRenter.findMany({ where: { ownerId }, orderBy: { moveOutDate: "desc" } }),
     db.rentChange.findMany({ where: { ownerId }, orderBy: { createdAt: "desc" } }),
     db.user.findUniqueOrThrow({ where: { id: ownerId }, select: { dueDay: true, lateFee: true } }),

@@ -16,8 +16,10 @@ export default async function Overdue({ searchParams }: { searchParams: Promise<
   const a = await getAccess();
   if (!a || !(a.perms.includes("GENERATE_BILLS") || a.perms.includes("APPROVE_PAYMENTS"))) return <main><h1>Overdue</h1><p>You do not have access.</p></main>;
   const { error, ok } = await searchParams;
+  const d = new Date(); d.setUTCMonth(d.getUTCMonth() - 4);
+  const since = d.toISOString().slice(0, 7);
   const [invoices, owner] = await Promise.all([
-    db.invoice.findMany({ where: { ownerId: a.ownerId, flat: flatScope(a) }, orderBy: { month: "desc" }, include: { flat: { include: { building: true, renter: { include: { user: true } } } } } }),
+    db.invoice.findMany({ where: { ownerId: a.ownerId, flat: flatScope(a), month: { gte: since } }, orderBy: { month: "desc" }, include: { flat: { include: { building: true, renter: { include: { user: true } } } } } }),
     db.user.findUniqueOrThrow({ where: { id: a.ownerId }, select: { lateFee: true } }),
   ]);
   const now = new Date();

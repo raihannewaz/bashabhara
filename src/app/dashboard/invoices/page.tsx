@@ -21,7 +21,7 @@ export default async function Invoices({ searchParams }: { searchParams: Promise
   const { error, ok } = await searchParams;
   const canRecord = a.perms.includes("APPROVE_PAYMENTS");
   const invoices = await db.invoice.findMany({
-    where: { ownerId: a.ownerId, flat: flatScope(a) }, orderBy: [{ month: "desc" }, { createdAt: "desc" }],
+    where: { ownerId: a.ownerId, flat: flatScope(a) }, orderBy: [{ month: "desc" }, { createdAt: "desc" }], take: 300,
     include: { items: true, flat: { include: { building: true, renter: { include: { user: true } } } } },
   });
 

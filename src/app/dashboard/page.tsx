@@ -18,10 +18,11 @@ export default async function Overview() {
   const sixAgo = new Date(`${months[0]}-01T00:00:00.000Z`);
   const soon = new Date(now.getTime() + 60 * 86_400_000);
   const showMoney = a.perms.includes("VIEW_REPORTS");
+  const since = (() => { const d = new Date(); d.setUTCMonth(d.getUTCMonth() - 4); return d.toISOString().slice(0, 7); })(); // only recent invoices are needed to find each flat's latest
 
   const [flats, invoices, pending, leases, payments, expenses] = await Promise.all([
     db.flat.findMany({ where: { ownerId, ...scope } }),
-    db.invoice.findMany({ where: { ownerId, flat: scope }, orderBy: { month: "desc" } }),
+    db.invoice.findMany({ where: { ownerId, flat: scope, month: { gte: since } }, orderBy: { month: "desc" } }),
     db.payment.count({ where: { ownerId, status: "PENDING", invoice: { flat: scope } } }),
     db.renter.findMany({ where: { ownerId, flat: scope, leaseEnd: { gte: now, lte: soon } }, include: { user: true, flat: true }, orderBy: { leaseEnd: "asc" } }),
     db.payment.findMany({ where: { ownerId, status: "APPROVED", createdAt: { gte: sixAgo }, invoice: { flat: scope } } }),
