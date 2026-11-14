@@ -1,10 +1,10 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, Building2, CreditCard, FileText, Gauge, LayoutDashboard, Receipt, UserCog, Users, Wallet, type LucideIcon } from "lucide-react";
+import { AlarmClock, BarChart3, Building2, CreditCard, FileText, Gauge, History, LayoutDashboard, Megaphone, Receipt, UserCog, Users, Wallet, Wrench, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const icons: Record<string, LucideIcon> = { overview: LayoutDashboard, setup: Building2, readings: Gauge, invoices: FileText, payments: Wallet, expenses: Receipt, reports: BarChart3, staff: Users, plan: CreditCard, account: UserCog };
+const icons: Record<string, LucideIcon> = { overview: LayoutDashboard, setup: Building2, readings: Gauge, invoices: FileText, payments: Wallet, expenses: Receipt, reports: BarChart3, staff: Users, plan: CreditCard, account: UserCog, overdue: AlarmClock, requests: Wrench, notices: Megaphone, audit: History };
 
 export default function NavLinks({ links, onNavigate }: { links: { href: string; label: string; icon: string }[]; onNavigate?: () => void }) {
   const path = usePathname();

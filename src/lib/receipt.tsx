@@ -12,11 +12,11 @@ if (hasBengali) {
 export type ReceiptData = {
   receiptNo: string; date: string; building: string; flat: string; renter: string; month: string;
   items: { name: string; amount: number }[]; previousDue: number; total: number;
-  paid: number; remaining: number; trxId: string; status: "UNPAID" | "PARTIAL" | "PAID";
+  paid: number; remaining: number; credit?: number; trxId: string; status: "UNPAID" | "PARTIAL" | "PAID";
 };
 
-const tk = (n: number) => `Tk ${n.toLocaleString("en-US")}`;
-const s = StyleSheet.create({
+export const tk = (n: number) => `Tk ${n.toLocaleString("en-US")}`;
+export const s = StyleSheet.create({
   page: { padding: 32, fontSize: 10, fontFamily: "Helvetica" },
   title: { fontSize: 16, textAlign: "center", marginBottom: 2 },
   sub: { textAlign: "center", marginBottom: 14 },
@@ -28,10 +28,10 @@ const s = StyleSheet.create({
 });
 
 /** English label, followed by the Bengali label in the Bengali font when it is installed. */
-const L = ({ en, bn }: { en: string; bn: string }) => (
+export const L = ({ en, bn }: { en: string; bn: string }) => (
   <Text>{en}{hasBengali && <Text style={{ fontFamily: "Bengali" }}> / {bn}</Text>}</Text>
 );
-const Row = ({ en, bn, value, strong }: { en: string; bn: string; value: string; strong?: boolean }) => (
+export const Row = ({ en, bn, value, strong }: { en: string; bn: string; value: string; strong?: boolean }) => (
   <View style={s.row}><View><L en={en} bn={bn} /></View><Text style={strong ? s.bold : undefined}>{value}</Text></View>
 );
 
@@ -54,6 +54,7 @@ export function receiptDoc(d: ReceiptData) {
         <Row en="Total" bn="মোট" value={tk(d.total)} />
         <Row en="Paid now" bn="এখন পরিশোধিত" value={tk(d.paid)} strong />
         <Row en="Remaining due" bn="অবশিষ্ট বকেয়া" value={tk(d.remaining)} />
+        {d.credit ? <Row en="Added to advance credit" bn="অগ্রিম জমা" value={tk(d.credit)} /> : null}
         <Row en="Transaction ID" bn="লেনদেন আইডি" value={d.trxId} />
         <View style={s.line} />
         <Text style={{ textAlign: "center" }}>Thank you{hasBengali && <Text style={{ fontFamily: "Bengali" }}> / ধন্যবাদ</Text>}</Text>

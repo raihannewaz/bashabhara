@@ -2,17 +2,23 @@
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { requireTenant } from "@/lib/tenant";
+import { getAccess, requireTenant } from "@/lib/tenant";
+import { audit } from "@/lib/audit";
 import { runAction } from "@/lib/run";
 import { saveUpload } from "@/lib/uploads";
 import { getFlatLimit } from "@/lib/plan";
 import { phoneSchema } from "@/lib/phone";
 
-const TABS = ["buildings", "flats", "renters", "heads", "accounts", "former"];
+const TABS = ["buildings", "flats", "renters", "heads", "accounts", "settings", "former"];
 const str = (f: FormData, k: string) => String(f.get(k) ?? "").trim();
 const num = (f: FormData, k: string) => Number(f.get(k) || 0);
 /** Redirects back to the tab the form came from. */
-const run = (f: FormData, fn: () => Promise<unknown>) => runAction(`/dashboard/setup?tab=${TABS.includes(str(f, "tab")) ? str(f, "tab") : "buildings"}`, fn);
+const run = (f: FormData, label: string, fn: () => Promise<unknown>) =>
+  runAction(`/dashboard/setup?tab=${TABS.includes(str(f, "tab")) ? str(f, "tab") : "buildings"}`, async () => {
+    await fn();
+    const a = await getAccess();
+    if (a) await audit(a.ownerId, label, str(f, "name") || str(f, "label") || str(f, "method") || undefined);
+  });
 const manage = () => requireTenant("MANAGE_PROPERTY");
 
 async function assertNoHistory(ownerId: string, flatId: string) {
@@ -27,20 +33,20 @@ const ownedBuilding = async (ownerId: string, id: string) => {
 const buildingSchema = z.object({ name: z.string().min(2), address: z.string().min(2) });
 const readBuilding = (f: FormData) => ({ name: str(f, "name"), address: str(f, "address") });
 export async function addBuilding(f: FormData) {
-  await run(f, async () => {
+  await run(f, "Added building", async () => {
     const ownerId = await manage();
     await db.building.create({ data: { ...buildingSchema.parse(readBuilding(f)), ownerId } });
   });
 }
 export async function updateBuilding(f: FormData) {
-  await run(f, async () => {
+  await run(f, "Edited building", async () => {
     const ownerId = await manage();
     const r = await db.building.updateMany({ where: { id: str(f, "id"), ownerId }, data: buildingSchema.parse(readBuilding(f)) });
     if (!r.count) throw new Error("Building not found");
   });
 }
 export async function deleteBuilding(f: FormData) {
-  await run(f, async () => {
+  await run(f, "Deleted building", async () => {
     const ownerId = await manage();
     const id = str(f, "id");
     await ownedBuilding(ownerId, id);
@@ -48,6 +54,7 @@ export async function deleteBuilding(f: FormData) {
     for (const fl of flats) await assertNoHistory(ownerId, fl.id);
     await db.$transaction([
       db.billingHead.deleteMany({ where: { OR: [{ buildingId: id }, { flatId: { in: flats.map((x) => x.id) } }], ownerId } }),
+      db.rentChange.deleteMany({ where: { flatId: { in: flats.map((x) => x.id) }, ownerId } }),
       db.flat.deleteMany({ where: { buildingId: id, ownerId } }),
       db.expense.updateMany({ where: { buildingId: id, ownerId }, data: { buildingId: null } }),
       db.building.delete({ where: { id } }),
@@ -59,7 +66,7 @@ export async function deleteBuilding(f: FormData) {
 const flatSchema = z.object({ buildingId: z.string().min(1), label: z.string().min(1), baseRent: z.number().min(0) });
 const readFlat = (f: FormData) => ({ buildingId: str(f, "buildingId"), label: str(f, "label"), baseRent: num(f, "baseRent") });
 export async function addFlat(f: FormData) {
-  await run(f, async () => {
+  await run(f, "Added flat", async () => {
     const ownerId = await manage();
     const d = flatSchema.parse(readFlat(f));
     const owner = await db.user.findUniqueOrThrow({ where: { id: ownerId } });
@@ -70,7 +77,7 @@ export async function addFlat(f: FormData) {
   });
 }
 export async function updateFlat(f: FormData) {
-  await run(f, async () => {
+  await run(f, "Edited flat", async () => {
     const ownerId = await manage();
     const d = flatSchema.extend({ status: z.enum(["VACANT", "OCCUPIED", "MAINTENANCE"]) }).parse({ ...readFlat(f), status: str(f, "status") });
     const flat = await db.flat.findFirst({ where: { id: str(f, "id"), ownerId }, include: { renter: true } });
@@ -78,30 +85,33 @@ export async function updateFlat(f: FormData) {
     await ownedBuilding(ownerId, d.buildingId);
     if (d.status === "OCCUPIED" && !flat.renter) throw new Error("Add a renter to make this flat occupied");
     if (d.status !== "OCCUPIED" && flat.renter) throw new Error("Move the renter out before changing the status");
-    await db.flat.update({ where: { id: flat.id }, data: d });
+    await db.$transaction([
+      db.flat.update({ where: { id: flat.id }, data: d }),
+      ...(d.baseRent !== flat.baseRent ? [db.rentChange.create({ data: { ownerId, flatId: flat.id, oldRent: flat.baseRent, newRent: d.baseRent } })] : []),
+    ]);
   });
 }
 export async function deleteFlat(f: FormData) {
-  await run(f, async () => {
+  await run(f, "Deleted flat", async () => {
     const ownerId = await manage();
     const id = str(f, "id");
     if (!(await db.flat.findFirst({ where: { id, ownerId } }))) throw new Error("Flat not found");
     await assertNoHistory(ownerId, id);
-    await db.$transaction([db.billingHead.deleteMany({ where: { flatId: id, ownerId } }), db.flat.delete({ where: { id } })]);
+    await db.$transaction([db.billingHead.deleteMany({ where: { flatId: id, ownerId } }), db.rentChange.deleteMany({ where: { flatId: id, ownerId } }), db.flat.delete({ where: { id } })]);
   });
 }
 
 // ---------- Renters ----------
 const renterFields = {
   name: z.string().min(2), phone: phoneSchema, whatsappNumber: phoneSchema,
-  nidNumber: z.string().nullable(), emergencyContact: z.string().nullable(), moveInDate: z.string().min(8), advanceDeposit: z.number().min(0),
+  nidNumber: z.string().nullable(), emergencyContact: z.string().nullable(), moveInDate: z.string().min(8), leaseEnd: z.string().nullable(), advanceDeposit: z.number().min(0),
 };
 const readRenter = (f: FormData) => ({
   name: str(f, "name"), phone: str(f, "phone"), whatsappNumber: str(f, "whatsappNumber") || str(f, "phone"),
-  nidNumber: str(f, "nidNumber") || null, emergencyContact: str(f, "emergencyContact") || null, moveInDate: str(f, "moveInDate"), advanceDeposit: num(f, "advanceDeposit"),
+  nidNumber: str(f, "nidNumber") || null, emergencyContact: str(f, "emergencyContact") || null, moveInDate: str(f, "moveInDate"), leaseEnd: str(f, "leaseEnd") || null, advanceDeposit: num(f, "advanceDeposit"),
 });
 export async function addRenter(f: FormData) {
-  await run(f, async () => {
+  await run(f, "Added renter", async () => {
     const ownerId = await manage();
     const d = z.object({ ...renterFields, flatId: z.string().min(1), password: z.string().min(6) }).parse({ ...readRenter(f), flatId: str(f, "flatId"), password: str(f, "password") });
     const flat = await db.flat.findFirst({ where: { id: d.flatId, ownerId, status: "VACANT" } });
@@ -111,13 +121,13 @@ export async function addRenter(f: FormData) {
     const nidBackUrl = await saveUpload(f.get("nidBack"), ownerId);
     await db.$transaction(async (tx) => {
       const user = await tx.user.create({ data: { name: d.name, phone: d.phone, password: hash, role: "RENTER", ownerId } });
-      await tx.renter.create({ data: { ownerId, userId: user.id, flatId: flat.id, phone: d.phone, whatsappNumber: d.whatsappNumber, nidNumber: d.nidNumber, nidFrontUrl, nidBackUrl, emergencyContact: d.emergencyContact, moveInDate: new Date(d.moveInDate), advanceDeposit: d.advanceDeposit } });
+      await tx.renter.create({ data: { ownerId, userId: user.id, flatId: flat.id, phone: d.phone, whatsappNumber: d.whatsappNumber, nidNumber: d.nidNumber, nidFrontUrl, nidBackUrl, emergencyContact: d.emergencyContact, moveInDate: new Date(d.moveInDate), leaseEnd: d.leaseEnd ? new Date(d.leaseEnd) : null, advanceDeposit: d.advanceDeposit } });
       await tx.flat.update({ where: { id: flat.id }, data: { status: "OCCUPIED" } });
     });
   });
 }
 export async function updateRenter(f: FormData) {
-  await run(f, async () => {
+  await run(f, "Edited renter", async () => {
     const ownerId = await manage();
     const d = z.object({ ...renterFields, password: z.string().min(6).optional() }).parse({ ...readRenter(f), password: str(f, "password") || undefined });
     const r = await db.renter.findFirst({ where: { id: str(f, "id"), ownerId } });
@@ -126,24 +136,24 @@ export async function updateRenter(f: FormData) {
     const nidBackUrl = await saveUpload(f.get("nidBack"), ownerId);
     await db.$transaction([
       db.user.update({ where: { id: r.userId }, data: { name: d.name, phone: d.phone, ...(d.password ? { password: await bcrypt.hash(d.password, 10) } : {}) } }),
-      db.renter.update({ where: { id: r.id }, data: { ...(nidFrontUrl ? { nidFrontUrl } : {}), ...(nidBackUrl ? { nidBackUrl } : {}), phone: d.phone, whatsappNumber: d.whatsappNumber, nidNumber: d.nidNumber, emergencyContact: d.emergencyContact, moveInDate: new Date(d.moveInDate), advanceDeposit: d.advanceDeposit } }),
+      db.renter.update({ where: { id: r.id }, data: { ...(nidFrontUrl ? { nidFrontUrl } : {}), ...(nidBackUrl ? { nidBackUrl } : {}), phone: d.phone, whatsappNumber: d.whatsappNumber, nidNumber: d.nidNumber, emergencyContact: d.emergencyContact, moveInDate: new Date(d.moveInDate), leaseEnd: d.leaseEnd ? new Date(d.leaseEnd) : null, advanceDeposit: d.advanceDeposit } }),
     ]);
   });
 }
 /** Move-out archives the renter with the recorded refund, removes only their login, and frees the flat. */
 export async function moveOut(f: FormData) {
-  await run(f, async () => {
+  await run(f, "Moved renter out", async () => {
     const ownerId = await manage();
     const r = await db.renter.findFirst({ where: { flatId: str(f, "flatId"), ownerId }, include: { user: true, flat: { include: { building: true } } } });
     if (!r) throw new Error("No renter in this flat");
     const refundPaid = num(f, "refund");
-    if (refundPaid < 0 || refundPaid > r.advanceDeposit) throw new Error("Refund must be between 0 and the advance deposit");
+    if (refundPaid < 0 || refundPaid > r.advanceDeposit + r.flat.creditBalance) throw new Error("Refund must be between 0 and the advance deposit plus any advance credit");
     const last = await db.invoice.findFirst({ where: { flatId: r.flatId, ownerId }, orderBy: { month: "desc" } });
     await db.$transaction([
       db.formerRenter.create({ data: { ownerId, name: r.user.name, phone: r.phone, whatsappNumber: r.whatsappNumber, nidNumber: r.nidNumber, nidFrontUrl: r.nidFrontUrl, nidBackUrl: r.nidBackUrl, emergencyContact: r.emergencyContact, flatLabel: r.flat.label, buildingName: r.flat.building.name, moveInDate: r.moveInDate, advanceDeposit: r.advanceDeposit, finalDue: last?.dueAmount ?? 0, refundPaid, settlementNote: str(f, "note") || null } }),
       db.renter.delete({ where: { id: r.id } }),
       db.user.delete({ where: { id: r.userId } }),
-      db.flat.update({ where: { id: r.flatId }, data: { status: "VACANT" } }),
+      db.flat.update({ where: { id: r.flatId }, data: { status: "VACANT", creditBalance: 0 } }),
     ]);
   });
 }
@@ -152,7 +162,7 @@ export async function moveOut(f: FormData) {
 const headSchema = z.object({ buildingId: z.string().min(1), name: z.string().min(2), type: z.enum(["FIXED", "METERED"]), fixedAmount: z.number().min(0), unitRate: z.number().min(0), demandCharge: z.number().min(0) });
 const readHead = (f: FormData) => ({ buildingId: str(f, "buildingId"), name: str(f, "name"), type: str(f, "type"), fixedAmount: num(f, "fixedAmount"), unitRate: num(f, "unitRate"), demandCharge: num(f, "demandCharge") });
 export async function addBillingHead(f: FormData) {
-  await run(f, async () => {
+  await run(f, "Added billing head", async () => {
     const ownerId = await manage();
     const d = headSchema.parse(readHead(f));
     await ownedBuilding(ownerId, d.buildingId);
@@ -160,7 +170,7 @@ export async function addBillingHead(f: FormData) {
   });
 }
 export async function updateBillingHead(f: FormData) {
-  await run(f, async () => {
+  await run(f, "Edited billing head", async () => {
     const ownerId = await manage();
     const d = headSchema.parse(readHead(f));
     await ownedBuilding(ownerId, d.buildingId);
@@ -169,7 +179,7 @@ export async function updateBillingHead(f: FormData) {
   });
 }
 export async function deleteBillingHead(f: FormData) {
-  await run(f, async () => {
+  await run(f, "Deleted billing head", async () => {
     const ownerId = await manage();
     await db.billingHead.deleteMany({ where: { id: str(f, "id"), ownerId } });
   });
@@ -179,21 +189,30 @@ export async function deleteBillingHead(f: FormData) {
 const accSchema = z.object({ method: z.enum(["bKash", "Nagad", "Rocket", "Upay", "Bank", "Cash"]), number: z.string().nullable(), bankName: z.string().nullable(), branch: z.string().nullable(), routingNo: z.string().nullable() });
 const readAcc = (f: FormData) => ({ method: str(f, "method"), number: str(f, "number") || null, bankName: str(f, "bankName") || null, branch: str(f, "branch") || null, routingNo: str(f, "routingNo") || null });
 export async function addPaymentAccount(f: FormData) {
-  await run(f, async () => {
+  await run(f, "Added payment account", async () => {
     const ownerId = await manage();
     await db.paymentAccount.create({ data: { ...accSchema.parse(readAcc(f)), ownerId } });
   });
 }
 export async function updatePaymentAccount(f: FormData) {
-  await run(f, async () => {
+  await run(f, "Edited payment account", async () => {
     const ownerId = await manage();
     const r = await db.paymentAccount.updateMany({ where: { id: str(f, "id"), ownerId }, data: accSchema.parse(readAcc(f)) });
     if (!r.count) throw new Error("Account not found");
   });
 }
 export async function deletePaymentAccount(f: FormData) {
-  await run(f, async () => {
+  await run(f, "Deleted payment account", async () => {
     const ownerId = await manage();
     await db.paymentAccount.deleteMany({ where: { id: str(f, "id"), ownerId } });
+  });
+}
+
+// ---------- Rent rules ----------
+export async function updateSettings(f: FormData) {
+  await run(f, "Changed rent rules", async () => {
+    const ownerId = await manage();
+    const d = z.object({ dueDay: z.number().int().min(1).max(28), lateFee: z.number().min(0) }).parse({ dueDay: num(f, "dueDay"), lateFee: num(f, "lateFee") });
+    await db.user.update({ where: { id: ownerId }, data: d });
   });
 }

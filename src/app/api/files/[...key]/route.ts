@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { auth } from "@/auth";
 import { db } from "@/lib/db";
-import { getAccess, getRenter } from "@/lib/tenant";
+import { flatScope, getAccess, getRenter } from "@/lib/tenant";
 import { KEY_RE, MIME, UPLOAD_DIR } from "@/lib/uploads";
 
 export const runtime = "nodejs";
@@ -19,6 +19,11 @@ export async function GET(_req: Request, ctx: { params: Promise<{ key: string[] 
   if (u.role === "OWNER" || u.role === "STAFF") {
     const a = await getAccess();
     allowed = !!a && a.ownerId === ownerId && (a.isOwner || a.perms.some((p) => p === "VIEW_FLATS" || p === "MANAGE_PROPERTY" || p === "APPROVE_PAYMENTS"));
+    if (allowed && a?.buildingIds) {
+      // staff limited to buildings may only open files that belong to those buildings
+      const scope = flatScope(a);
+      allowed = !!(await db.renter.findFirst({ where: { ownerId, flat: scope, OR: [{ nidFrontUrl: url }, { nidBackUrl: url }] } })) || !!(await db.payment.findFirst({ where: { ownerId, screenshotUrl: url, invoice: { flat: scope } } }));
+    }
   } else if (u.role === "RENTER") {
     const r = await getRenter();
     if (r && r.ownerId === ownerId) {

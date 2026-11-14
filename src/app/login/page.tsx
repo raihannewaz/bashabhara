@@ -1,12 +1,15 @@
 import { AuthError } from "next-auth";
 import { redirect } from "next/navigation";
 import { signIn } from "@/auth";
+import { getT } from "@/lib/i18n";
+import LangToggle from "@/components/LangToggle";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 
 export default async function Login({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
   const { error } = await searchParams;
+  const { t } = await getT();
 
   async function login(form: FormData) {
     "use server";
@@ -25,17 +28,18 @@ export default async function Login({ searchParams }: { searchParams: Promise<{ 
   return (
     <div className="flex min-h-screen items-center justify-center p-4">
       <Card className="w-full max-w-sm">
-        <CardHeader><CardTitle>Log in to BashaBhara</CardTitle></CardHeader>
+        <CardHeader><CardTitle>{t("login.title")}</CardTitle></CardHeader>
         <CardContent>
-          {error && <p className="mb-3 text-sm text-destructive">Wrong email, phone or password, or the account is locked for 15 minutes after 5 failed attempts.</p>}
+          {error && <p className="mb-3 text-sm text-destructive">{t("login.wrong")}</p>}
           <form action={login} className="grid gap-3">
-            <Input name="identifier" placeholder="Email or phone" required />
-            <Input name="password" type="password" placeholder="Password" required />
-            <Button type="submit">Log in</Button>
+            <Input name="identifier" placeholder={t("login.id")} required />
+            <Input name="password" type="password" placeholder={t("login.password")} required />
+            <Button type="submit">{t("login.submit")}</Button>
           </form>
-          <p className="mt-4 text-xs text-muted-foreground">Forgot your password? Renters and staff: ask your landlord to reset it. Landlords: ask the administrator.</p>
+          <p className="mt-4 text-xs text-muted-foreground">{t("login.forgot")}</p>
         </CardContent>
       </Card>
+      <div className="fixed left-4 top-4"><LangToggle /></div>
     </div>
   );
 }

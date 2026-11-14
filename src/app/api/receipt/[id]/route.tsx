@@ -1,7 +1,7 @@
 import { renderToBuffer } from "@react-pdf/renderer";
 import { auth } from "@/auth";
 import { db } from "@/lib/db";
-import { getRenter, requireTenant } from "@/lib/tenant";
+import { getRenter, requireScope } from "@/lib/tenant";
 import { receiptDoc } from "@/lib/receipt";
 
 export const runtime = "nodejs";
@@ -22,7 +22,8 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     if (!r || r.flatId !== p.invoice.flatId) return new Response("Forbidden", { status: 403 });
   } else {
     try {
-      if ((await requireTenant(["APPROVE_PAYMENTS", "GENERATE_BILLS"])) !== p.ownerId) return new Response("Forbidden", { status: 403 });
+      const sc = await requireScope(["APPROVE_PAYMENTS", "GENERATE_BILLS"]);
+      if (sc.ownerId !== p.ownerId || (sc.buildingIds && !sc.buildingIds.includes(p.invoice.flat.buildingId))) return new Response("Forbidden", { status: 403 });
     } catch {
       return new Response("Forbidden", { status: 403 });
     }
@@ -35,7 +36,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     receiptNo: p.id.slice(-8).toUpperCase(), date: when.toISOString().slice(0, 10),
     building: inv.flat.building.name, flat: inv.flat.label, renter: p.renterName ?? inv.flat.renter?.user.name ?? "-", month: inv.month,
     items: snap?.items ?? inv.items.map((i) => ({ name: i.headName, amount: i.amount })), previousDue: snap?.previousDue ?? inv.previousDue, total: snap?.total ?? inv.totalAmount,
-    paid: p.paidAmount, remaining: snap?.dueAfter ?? inv.dueAmount, trxId: p.transactionId, status: inv.status,
+    paid: p.paidAmount, credit: p.creditAdded, remaining: snap?.dueAfter ?? inv.dueAmount, trxId: p.transactionId, status: inv.status,
   }));
   return new Response(new Uint8Array(buf), { headers: { "Content-Type": "application/pdf", "Content-Disposition": `inline; filename="receipt-${p.id.slice(-8)}.pdf"` } });
 }

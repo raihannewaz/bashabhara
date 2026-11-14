@@ -1,6 +1,6 @@
-import { Paperclip } from "lucide-react";
+import { Download, Paperclip } from "lucide-react";
 import { db } from "@/lib/db";
-import { requireTenant } from "@/lib/tenant";
+import { requireScope } from "@/lib/tenant";
 import { runAction } from "@/lib/run";
 import Flash from "@/components/Flash";
 import ConfirmButton from "@/components/ConfirmButton";
@@ -12,12 +12,12 @@ import { Field, PageHeader, Stat, StatusBadge, tk } from "@/components/ui/page";
 import { approvePayment, rejectPayment, revertPayment } from "@/actions/billing";
 
 export default async function Payments({ searchParams }: { searchParams: Promise<{ error?: string; ok?: string }> }) {
-  const ownerId = await requireTenant("APPROVE_PAYMENTS");
+  const { ownerId, flat } = await requireScope("APPROVE_PAYMENTS");
   const { error, ok } = await searchParams;
   const include = { invoice: { include: { flat: true } } };
   const [pending, decided] = await Promise.all([
-    db.payment.findMany({ where: { ownerId, status: "PENDING" }, orderBy: { createdAt: "asc" }, include }),
-    db.payment.findMany({ where: { ownerId, status: { not: "PENDING" } }, orderBy: { createdAt: "desc" }, take: 100, include }),
+    db.payment.findMany({ where: { ownerId, status: "PENDING", invoice: { flat } }, orderBy: { createdAt: "asc" }, include }),
+    db.payment.findMany({ where: { ownerId, status: { not: "PENDING" }, invoice: { flat } }, orderBy: { createdAt: "desc" }, take: 100, include }),
   ]);
 
   async function approve(f: FormData) { "use server"; await runAction("/dashboard/payments", () => approvePayment(String(f.get("id")))); }
@@ -27,7 +27,7 @@ export default async function Payments({ searchParams }: { searchParams: Promise
   return (
     <main>
       <Flash ok={ok} error={error} />
-      <PageHeader title="Payments" subtitle="Check each TrxID against your bKash, Nagad or bank statement before approving." />
+      <PageHeader title="Payments" subtitle="Check each TrxID against your bKash, Nagad or bank statement before approving. To record cash or money received in person, use Receive payment on an invoice." action={<a href="/api/export/payments" style={{ textDecoration: "none", color: "hsl(var(--foreground))" }} className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm hover:bg-muted"><Download className="h-4 w-4" />Export CSV</a>} />
       <h2>Waiting for verification ({pending.length})</h2>
       {pending.length === 0 ? <p className="mb-6 rounded-xl border border-dashed py-8 text-center text-muted-foreground">Nothing waiting.</p> : (
         <div className="mb-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -52,7 +52,7 @@ export default async function Payments({ searchParams }: { searchParams: Promise
         node: (
           <Card className="p-4">
             <div className="flex items-start justify-between gap-2"><div><div className="font-semibold">Flat {p.invoice.flat.label}, {p.invoice.month}</div><div className="text-sm text-muted-foreground">{p.transactionId}</div></div><StatusBadge status={p.status} /></div>
-            <div className="mt-2 text-sm">{tk(p.paidAmount)}{p.rejectReason ? ` rejected: ${p.rejectReason}` : ""}</div>
+            <div className="mt-2 text-sm">{tk(p.paidAmount)}{p.method && p.method !== "TRX" ? ` by ${p.method.toLowerCase()}${p.recordedBy ? `, recorded by ${p.recordedBy}` : ""}` : ""}{p.creditAdded > 0 ? `, ${tk(p.creditAdded)} kept as credit` : ""}{p.rejectReason ? ` rejected: ${p.rejectReason}` : ""}</div>
             <div className="mt-3 flex flex-wrap items-center gap-2">
               {p.status === "APPROVED" && <a href={`/api/receipt/${p.id}`} target="_blank" rel="noreferrer" style={{ textDecoration: "none", color: "hsl(var(--foreground))" }} className="inline-flex rounded-lg border px-3 py-1.5 text-sm hover:bg-muted">Receipt PDF</a>}
               <form action={revert}><input type="hidden" name="id" value={p.id} /><ConfirmButton message="Send this payment back to the waiting list and undo its effect on the invoice?">Undo</ConfirmButton></form>

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Plus } from "lucide-react";
 import { db } from "@/lib/db";
-import { getAccess } from "@/lib/tenant";
+import { flatScope, getAccess } from "@/lib/tenant";
 import Flash from "@/components/Flash";
 import ConfirmButton from "@/components/ConfirmButton";
 import FilterableList from "@/components/FilterableList";
@@ -11,7 +11,7 @@ import { Card } from "@/components/ui/card";
 import { Field, PageHeader, Stat, StatusBadge, tk } from "@/components/ui/page";
 import * as A from "@/actions/setup";
 
-const TABS = [["buildings", "Buildings"], ["flats", "Flats"], ["renters", "Renters"], ["heads", "Billing heads"], ["accounts", "Payment accounts"], ["former", "Former renters"]] as const;
+const TABS = [["buildings", "Buildings"], ["flats", "Flats"], ["renters", "Renters"], ["heads", "Billing heads"], ["accounts", "Payment accounts"], ["settings", "Rent rules"], ["former", "Former renters"]] as const;
 const METHODS = ["bKash", "Nagad", "Rocket", "Upay", "Bank", "Cash"];
 const add = (label: string) => <><Plus className="h-4 w-4" />{label}</>;
 const day = (d: Date) => d.toISOString().slice(0, 10);
@@ -22,16 +22,22 @@ export default async function Setup({ searchParams }: { searchParams: Promise<{ 
   const can = a.perms.includes("MANAGE_PROPERTY");
   const ownerId = a.ownerId;
   const sp = await searchParams;
-  const tab = TABS.some((t) => t[0] === sp.tab) ? sp.tab! : "buildings";
+  const restricted = a.buildingIds !== null;
+  const tabs = TABS.filter(([k]) => !(restricted && (k === "former" || k === "settings")));
+  const tab = tabs.some((t) => t[0] === sp.tab) ? sp.tab! : "buildings";
+  const scope = flatScope(a);
+  const bScope = a.buildingIds ? { buildingId: { in: a.buildingIds } } : {};
 
-  const [buildings, flats, renters, heads, accounts, invoices, former] = await Promise.all([
-    db.building.findMany({ where: { ownerId } }),
-    db.flat.findMany({ where: { ownerId }, include: { building: true, renter: { include: { user: true } } }, orderBy: { label: "asc" } }),
-    db.renter.findMany({ where: { ownerId }, include: { user: true, flat: { include: { building: true } } } }),
-    db.billingHead.findMany({ where: { ownerId } }),
+  const [buildings, flats, renters, heads, accounts, invoices, former, rentChanges, settings] = await Promise.all([
+    db.building.findMany({ where: { ownerId, ...(a.buildingIds ? { id: { in: a.buildingIds } } : {}) } }),
+    db.flat.findMany({ where: { ownerId, ...scope }, include: { building: true, renter: { include: { user: true } } }, orderBy: { label: "asc" } }),
+    db.renter.findMany({ where: { ownerId, flat: scope }, include: { user: true, flat: { include: { building: true } } } }),
+    db.billingHead.findMany({ where: { ownerId, ...bScope } }),
     db.paymentAccount.findMany({ where: { ownerId } }),
-    db.invoice.findMany({ where: { ownerId }, orderBy: { month: "desc" } }),
+    db.invoice.findMany({ where: { ownerId, flat: scope }, orderBy: { month: "desc" } }),
     db.formerRenter.findMany({ where: { ownerId }, orderBy: { moveOutDate: "desc" } }),
+    db.rentChange.findMany({ where: { ownerId }, orderBy: { createdAt: "desc" } }),
+    db.user.findUniqueOrThrow({ where: { id: ownerId }, select: { dueDay: true, lateFee: true } }),
   ]);
   const lastDue = new Map<string, number>();
   for (const i of invoices) if (!lastDue.has(i.flatId)) lastDue.set(i.flatId, i.dueAmount);
@@ -75,6 +81,7 @@ export default async function Setup({ searchParams }: { searchParams: Promise<{ 
       <Field label="NID number"><input name="nidNumber" defaultValue={r?.nidNumber ?? ""} /></Field>
       <Field label="Emergency contact"><input name="emergencyContact" defaultValue={r?.emergencyContact ?? ""} /></Field>
       <Field label="Move-in date"><input name="moveInDate" type="date" defaultValue={r ? day(r.moveInDate) : undefined} required /></Field>
+      <Field label="Lease end date" hint="Optional. You are reminded 60 days before."><input name="leaseEnd" type="date" defaultValue={r?.leaseEnd ? day(r.leaseEnd) : undefined} /></Field>
       <Field label="Advance deposit (৳)"><input name="advanceDeposit" type="number" min={0} defaultValue={r?.advanceDeposit} /></Field>
       <Field label="NID front (photo or PDF)"><input name="nidFront" type="file" accept="image/*,application/pdf" /></Field>
       <Field label="NID back (photo or PDF)"><input name="nidBack" type="file" accept="image/*,application/pdf" /></Field>
@@ -126,8 +133,8 @@ export default async function Setup({ searchParams }: { searchParams: Promise<{ 
       node: (
         <Card className="p-4">
           <div className="flex items-start justify-between gap-2"><div><div className="font-semibold">Flat {f.label}</div><div className="text-sm text-muted-foreground">{f.building.name}</div></div><StatusBadge status={f.status} /></div>
-          <div className="mt-3 grid grid-cols-2 gap-2"><Stat label="Base rent" value={tk(f.baseRent)} strong /><Stat label="Renter" value={f.renter?.user.name ?? "-"} /></div>
-          {can && <div className="mt-3"><Modal trigger="Edit" title={`Edit flat ${f.label}`}>{flatForm(f)}{del(A.deleteFlat, f.id, `Delete flat ${f.label}? This only works when it has no renter or billing history.`)}</Modal></div>}
+          <div className="mt-3 grid grid-cols-2 gap-2"><Stat label="Base rent" value={tk(f.baseRent)} strong /><Stat label="Renter" value={f.renter?.user.name ?? "-"} />{f.creditBalance > 0 && <Stat label="Advance credit" value={tk(f.creditBalance)} />}</div>
+          {can && <div className="mt-3"><Modal trigger="Edit" title={`Edit flat ${f.label}`}>{flatForm(f)}{rentChanges.filter((c) => c.flatId === f.id).length > 0 && <div className="mt-4 border-t pt-3 text-sm"><div className="mb-1 font-medium">Rent history</div>{rentChanges.filter((c) => c.flatId === f.id).slice(0, 8).map((c) => <div key={c.id} className="text-muted-foreground">{day(c.createdAt)}: {tk(c.oldRent)} to {tk(c.newRent)}</div>)}</div>}{del(A.deleteFlat, f.id, `Delete flat ${f.label}? This only works when it has no renter or billing history.`)}</Modal></div>}
         </Card>
       ),
     }))} />;
@@ -138,23 +145,24 @@ export default async function Setup({ searchParams }: { searchParams: Promise<{ 
         {can && vacant.length === 0 && <p className="mb-3 rounded-lg border border-dashed p-3 text-sm text-muted-foreground">There is no vacant flat to add a renter to.</p>}
         <FilterableList placeholder="Search by name, phone or flat" empty="No renters yet." items={renters.map((r) => {
           const due = lastDue.get(r.flatId) ?? 0;
-          const bal = r.advanceDeposit - due;
+          const credit = r.flat.creditBalance;
+          const bal = r.advanceDeposit + credit - due;
           return {
             id: r.id, search: `${r.user.name} ${r.phone} ${r.flat.label} ${r.flat.building.name}`,
             node: (
               <Card className="p-4">
                 <div className="font-semibold">{r.user.name}</div>
                 <div className="text-sm text-muted-foreground">{r.flat.building.name}, flat {r.flat.label}</div>
-                <div className="mt-3 grid grid-cols-2 gap-2"><Stat label="Phone" value={r.phone} /><Stat label="Advance deposit" value={tk(r.advanceDeposit)} strong /></div>
+                <div className="mt-3 grid grid-cols-2 gap-2"><Stat label="Phone" value={r.phone} /><Stat label="Advance deposit" value={tk(r.advanceDeposit)} strong />{credit > 0 && <Stat label="Advance credit" value={tk(credit)} />}{r.leaseEnd && <Stat label="Lease ends" value={day(r.leaseEnd)} />}</div>
                 {nidLinks(r.nidFrontUrl, r.nidBackUrl, r.nidNumber)}
                 {can && (
                   <div className="mt-3 flex flex-wrap gap-2">
                     <Modal trigger="Edit" title={`Edit ${r.user.name}`}>{renterForm(r)}</Modal>
                     <Modal trigger="Move out" title={`Move out ${r.user.name}`} variant="ghost">
-                      <div className="mb-3 grid grid-cols-3 gap-2 rounded-lg bg-muted p-3"><Stat label="Deposit" value={tk(r.advanceDeposit)} /><Stat label="Due" value={tk(due)} /><Stat label={bal >= 0 ? "Refund due" : "Renter owes"} value={tk(Math.abs(bal))} strong /></div>
+                      <div className="mb-3 grid grid-cols-2 gap-2 rounded-lg bg-muted p-3 sm:grid-cols-4"><Stat label="Deposit" value={tk(r.advanceDeposit)} /><Stat label="Advance credit" value={tk(credit)} /><Stat label="Due" value={tk(due)} /><Stat label={bal >= 0 ? "Refund due" : "Renter owes"} value={tk(Math.abs(bal))} strong /></div>
                       <form action={A.moveOut} className="grid gap-3">
                         {T}<input type="hidden" name="flatId" value={r.flatId} />
-                        <Field label="Refund paid to renter (৳)" hint="Record what you actually returned"><input name="refund" type="number" min={0} max={r.advanceDeposit} step="any" defaultValue={Math.max(bal, 0)} required /></Field>
+                        <Field label="Refund paid to renter (৳)" hint="Record what you actually returned"><input name="refund" type="number" min={0} max={r.advanceDeposit + credit} step="any" defaultValue={Math.max(bal, 0)} required /></Field>
                         <Field label="Note"><input name="note" placeholder="For example deducted for repairs" /></Field>
                         <ConfirmButton message={`Move ${r.user.name} out? Their login is removed and the flat becomes vacant. Their details move to Former renters.`}>Complete move-out</ConfirmButton>
                       </form>
@@ -191,6 +199,17 @@ export default async function Setup({ searchParams }: { searchParams: Promise<{ 
         </Card>
       ),
     }))} />;
+  } else if (tab === "settings") {
+    body = (
+      <Card className="max-w-md p-5">
+        <form action={A.updateSettings} className="grid gap-3">
+          {T}
+          <Field label="Rent due on day of month" hint="1 to 28. Invoices get this due date."><input name="dueDay" type="number" min={1} max={28} defaultValue={settings.dueDay} required disabled={!can} /></Field>
+          <Field label="Late fee (৳)" hint="Added once to a flat's unpaid invoice when you press Apply late fees on the Overdue page. 0 means no late fee."><input name="lateFee" type="number" min={0} step="any" defaultValue={settings.lateFee} required disabled={!can} /></Field>
+          {can && <Button type="submit">Save</Button>}
+        </form>
+      </Card>
+    );
   } else {
     body = <FilterableList placeholder="Search former renters" empty="No former renters yet. Renters you move out are kept here." items={former.map((r) => ({
       id: r.id, search: `${r.name} ${r.phone} ${r.flatLabel} ${r.buildingName}`,
@@ -211,7 +230,7 @@ export default async function Setup({ searchParams }: { searchParams: Promise<{ 
       <Flash ok={sp.ok} error={sp.error} />
       <PageHeader title="Setup" subtitle="Buildings, flats, renters and billing rules" action={action} />
       <div className="mb-5 flex gap-1 overflow-x-auto border-b">
-        {TABS.map(([k, label]) => (
+        {tabs.map(([k, label]) => (
           <Link key={k} href={`/dashboard/setup?tab=${k}`} style={{ textDecoration: "none", color: tab === k ? "hsl(var(--primary))" : "hsl(var(--muted-foreground))", borderBottom: tab === k ? "2px solid hsl(var(--primary))" : "2px solid transparent" }} className="shrink-0 px-3 py-2 text-sm font-medium">{label}</Link>
         ))}
       </div>

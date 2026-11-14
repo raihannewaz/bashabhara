@@ -45,6 +45,9 @@ model User {
   plan        String   @default("FREE")
   active      Boolean  @default(true)
   flatLimit   Int?
+  dueDay      Int      @default(10)
+  lateFee     Float    @default(0)
+  buildingIds Json?
   failedLogins Int     @default(0)
   lockedUntil DateTime?
   createdAt   DateTime @default(now())
@@ -68,6 +71,7 @@ model Flat {
   label      String
   baseRent   Float
   status     FlatStatus @default(VACANT)
+  creditBalance Float   @default(0)
   renter     Renter?
   invoices   Invoice[]
   @@index([ownerId])
@@ -88,6 +92,7 @@ model Renter {
   emergencyContact String?
   moveInDate       DateTime
   advanceDeposit   Float    @default(0)
+  leaseEnd         DateTime?
   @@index([ownerId])
 }
 
@@ -110,6 +115,7 @@ model Invoice {
   flatId      String
   flat        Flat          @relation(fields: [flatId], references: [id])
   month       String
+  dueDate     DateTime?
   previousDue Float         @default(0)
   totalAmount Float
   paidAmount  Float         @default(0)
@@ -159,6 +165,9 @@ model Payment {
   approvedAt    DateTime?
   renterName    String?
   snapshot      Json?
+  method        String?
+  creditAdded   Float         @default(0)
+  recordedBy    String?
   createdAt     DateTime      @default(now())
   @@index([ownerId])
 }
@@ -204,5 +213,51 @@ model SubscriptionPayment {
   status        PaymentStatus @default(PENDING)
   rejectReason  String?
   createdAt     DateTime      @default(now())
+  @@index([ownerId])
+}
+
+model RentChange {
+  id        String   @id @default(cuid())
+  ownerId   String
+  flatId    String
+  oldRent   Float
+  newRent   Float
+  createdAt DateTime @default(now())
+  @@index([ownerId, flatId])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  ownerId   String
+  userName  String
+  action    String
+  detail    String?
+  createdAt DateTime @default(now())
+  @@index([ownerId, createdAt])
+}
+
+model ServiceRequest {
+  id         String   @id @default(cuid())
+  ownerId    String
+  flatId     String
+  buildingId String
+  flatLabel  String
+  renterName String
+  title      String
+  details    String?
+  status     String   @default("OPEN")
+  response   String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  @@index([ownerId])
+}
+
+model Notice {
+  id         String   @id @default(cuid())
+  ownerId    String
+  buildingId String?
+  title      String
+  body       String
+  createdAt  DateTime @default(now())
   @@index([ownerId])
 }

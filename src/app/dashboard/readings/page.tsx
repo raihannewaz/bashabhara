@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
-import { requireTenant } from "@/lib/tenant";
+import { requireScope } from "@/lib/tenant";
 import Flash from "@/components/Flash";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -8,12 +8,12 @@ import { PageHeader, StatusBadge } from "@/components/ui/page";
 import { generateBulkInvoices } from "@/actions/billing";
 
 export default async function Readings({ searchParams }: { searchParams: Promise<{ month?: string; error?: string; ok?: string }> }) {
-  const ownerId = await requireTenant(["ENTER_METER_READING", "GENERATE_BILLS"]);
+  const { ownerId, flat: scope } = await requireScope(["ENTER_METER_READING", "GENERATE_BILLS"]);
   const sp = await searchParams;
   const month = /^\d{4}-\d{2}$/.test(sp.month ?? "") ? sp.month! : new Date().toISOString().slice(0, 7);
 
   const [flats, heads, invoices] = await Promise.all([
-    db.flat.findMany({ where: { ownerId, status: "OCCUPIED" }, include: { building: true, renter: { include: { user: true } } }, orderBy: { label: "asc" } }),
+    db.flat.findMany({ where: { ownerId, status: "OCCUPIED", ...scope }, include: { building: true, renter: { include: { user: true } } }, orderBy: { label: "asc" } }),
     db.billingHead.findMany({ where: { ownerId, type: "METERED" } }),
     db.invoice.findMany({ where: { ownerId }, orderBy: { month: "desc" }, include: { items: true } }),
   ]);

@@ -1,4 +1,4 @@
-import { Plus } from "lucide-react";
+import { Download, Plus } from "lucide-react";
 import { db } from "@/lib/db";
 import { requireTenant } from "@/lib/tenant";
 import Flash from "@/components/Flash";
@@ -37,7 +37,7 @@ export default async function Expenses({ searchParams }: { searchParams: Promise
     <main>
       <Flash ok={ok} error={error} />
       <datalist id="cats">{CATEGORIES.map((c) => <option key={c} value={c} />)}</datalist>
-      <PageHeader title="Expenses" subtitle={`Spent this month: ${tk(thisMonth)}`} action={<Modal trigger={<><Plus className="h-4 w-4" />Add expense</>} title="Add expense" variant="default" small={false}>{form()}</Modal>} />
+      <PageHeader title="Expenses" subtitle={`Spent this month: ${tk(thisMonth)}`} action={<><a href="/api/export/expenses" style={{ textDecoration: "none", color: "hsl(var(--foreground))" }} className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm hover:bg-muted"><Download className="h-4 w-4" />Export CSV</a><Modal trigger={<><Plus className="h-4 w-4" />Add expense</>} title="Add expense" variant="default" small={false}>{form()}</Modal></>} />
       <FilterableList groups={[...new Set(expenses.map((e) => e.category))]} groupLabel="All categories" placeholder="Search expenses" empty="No expenses yet." items={expenses.map((e) => ({
         id: e.id, group: e.category, search: `${e.category} ${e.note ?? ""} ${e.date.toISOString().slice(0, 10)} ${bName(e.buildingId)}`,
         node: (

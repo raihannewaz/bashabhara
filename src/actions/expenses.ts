@@ -3,6 +3,7 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { requireTenant } from "@/lib/tenant";
 import { runAction } from "@/lib/run";
+import { audit } from "@/lib/audit";
 
 const run = (fn: () => Promise<unknown>) => runAction("/dashboard/expenses", fn);
 const str = (f: FormData, k: string) => String(f.get(k) ?? "").trim();
@@ -18,6 +19,7 @@ export async function addExpense(f: FormData) {
     const d = schema.parse(read(f));
     await check(ownerId, d.buildingId);
     await db.expense.create({ data: { ...d, date: new Date(d.date), ownerId } });
+    await audit(ownerId, "Added expense", `${d.category} ৳${d.amount}`);
   });
 }
 export async function updateExpense(f: FormData) {
@@ -27,5 +29,6 @@ export async function updateExpense(f: FormData) {
     await check(ownerId, d.buildingId);
     const r = await db.expense.updateMany({ where: { id: str(f, "id"), ownerId }, data: { ...d, date: new Date(d.date) } });
     if (!r.count) throw new Error("Expense not found");
+    await audit(ownerId, "Edited expense", `${d.category} ৳${d.amount}`);
   });
 }

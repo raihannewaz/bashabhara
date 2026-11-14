@@ -35,3 +35,17 @@ Not built yet: nothing from the original brief.
 - Suspending a landlord blocks their staff and renters on their next request.
 - Move-out records the refund actually paid and a note.
 - Seeding twice no longer duplicates the demo data.
+
+## Money handling
+- **Receive payment** on an invoice records cash, bKash, Nagad, Rocket, Upay or bank money received in person and approves it at once. Paying more than the due keeps the excess as the flat's advance credit, which is applied to the next invoice automatically.
+- Invoices get a **due date** (set the day under Setup, Rent rules). The **Overdue** page lists unpaid flats with a WhatsApp reminder each and can add a **late fee** once per overdue invoice.
+- Every approval, rejection, undo, adjustment, recorded payment, setup change and staff change is written to the **Activity log** (owner only, cannot be edited).
+- **Export CSV** (opens in Excel) is on Invoices, Payments, Expenses and Reports. Add `?month=2026-03` to an export link for one month.
+- **Bill PDF** (Invoices page, renter portal) and **receipt PDF** are bilingual when the Bengali font is installed.
+- Rent changes are recorded with the old and new rent (flat Edit window shows the history).
+- Staff can be limited to certain buildings. Those staff cannot manage property, expenses or reports.
+- Renters can report repair problems, and see notices and their lease end date. Landlords answer under Repair requests.
+- Language: the button in the menu switches between English and Bengali. The menu, overview, login and renter portal are translated; the landlord forms and setup screens are English only.
+
+## Tests and backups
+`npm test` runs unit tests for the money rules (status, partial payments, credit, meter charges, due dates, phone numbers). `scripts/backup.sh` dumps the database and the uploads folder; run it daily from cron and copy the result off the server.

@@ -1,3 +1,4 @@
+import { Download } from "lucide-react";
 import { db } from "@/lib/db";
 import { requireTenant } from "@/lib/tenant";
 import { Card } from "@/components/ui/card";
@@ -23,7 +24,7 @@ export default async function Reports() {
 
   return (
     <main>
-      <PageHeader title="Income vs expenses" subtitle="Income counts approved payments in the month they were approved." />
+      <PageHeader title="Income vs expenses" subtitle="Income counts approved payments in the month they were approved." action={<><a href="/api/export/payments" style={{ textDecoration: "none", color: "hsl(var(--foreground))" }} className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm hover:bg-muted"><Download className="h-4 w-4" />Payments CSV</a><a href="/api/export/expenses" style={{ textDecoration: "none", color: "hsl(var(--foreground))" }} className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm hover:bg-muted"><Download className="h-4 w-4" />Expenses CSV</a></>} />
       <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Card className="p-4"><div className="text-sm text-muted-foreground">Total income</div><div className="text-2xl font-bold">{tk(tot.income)}</div></Card>
         <Card className="p-4"><div className="text-sm text-muted-foreground">Total expenses</div><div className="text-2xl font-bold">{tk(tot.expense)}</div></Card>

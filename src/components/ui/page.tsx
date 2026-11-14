@@ -21,10 +21,10 @@ const tones: Record<string, string> = {
   red: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300",
   slate: "bg-muted text-muted-foreground",
 };
-const toneOf: Record<string, string> = { PAID: "green", APPROVED: "green", OCCUPIED: "green", ACTIVE: "green", PRO: "green", PARTIAL: "amber", PENDING: "amber", MAINTENANCE: "amber", UNPAID: "red", REJECTED: "red", SUSPENDED: "red" };
+const toneOf: Record<string, string> = { PAID: "green", APPROVED: "green", OCCUPIED: "green", ACTIVE: "green", PRO: "green", PARTIAL: "amber", PENDING: "amber", MAINTENANCE: "amber", OPEN: "amber", IN_PROGRESS: "amber", DONE: "green", UNPAID: "red", REJECTED: "red", SUSPENDED: "red" };
 
-export function StatusBadge({ status, className }: { status: string; className?: string }) {
-  return <span className={cn("inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium", tones[toneOf[status] ?? "slate"], className)}>{status}</span>;
+export function StatusBadge({ status, label, className, children }: { status: string; label?: string; className?: string; children?: React.ReactNode }) {
+  return <span className={cn("inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium", tones[toneOf[status] ?? "slate"], className)}>{children ?? label ?? status}</span>;
 }
 
 /** Small label and value pair used inside cards. */
